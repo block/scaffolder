@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TBD54566975/scaffolder"
+	"github.com/block/scaffolder"
 )
 
 type File struct {

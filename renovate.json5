@@ -10,7 +10,7 @@
   ],
   packageRules: [
     {
-      matchPackageNames: ["github.com/TBD54566975/scaffolder"],
+      matchPackageNames: ["github.com/block/scaffolder"],
       matchManagers: ["gomod"],
       enabled: false,
     },

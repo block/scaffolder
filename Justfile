@@ -9,23 +9,23 @@ tag:
   (
     cd extensions/javascript
     go mod edit \
-      -require=github.com/TBD54566975/scaffolder@"$version" \
-      -replace=github.com/TBD54566975/scaffolder=../..
+      -require=github.com/block/scaffolder@"$version" \
+      -replace=github.com/block/scaffolder=../..
     go mod tidy
     go mod edit \
-      -dropreplace=github.com/TBD54566975/scaffolder
+      -dropreplace=github.com/block/scaffolder
   )
   (
     cd cmd/scaffolder
     go mod edit \
-      -require=github.com/TBD54566975/scaffolder@"$version" \
-      -replace=github.com/TBD54566975/scaffolder=../.. \
-      -require=github.com/TBD54566975/scaffolder/extensions/javascript@"$version" \
-      -replace=github.com/TBD54566975/scaffolder/extensions/javascript=../../extensions/javascript
+      -require=github.com/block/scaffolder@"$version" \
+      -replace=github.com/block/scaffolder=../.. \
+      -require=github.com/block/scaffolder/extensions/javascript@"$version" \
+      -replace=github.com/block/scaffolder/extensions/javascript=../../extensions/javascript
     go mod tidy
     go mod edit \
-      -dropreplace=github.com/TBD54566975/scaffolder \
-      -dropreplace=github.com/TBD54566975/scaffolder/extensions/javascript
+      -dropreplace=github.com/block/scaffolder \
+      -dropreplace=github.com/block/scaffolder/extensions/javascript
   )
   git add cmd/scaffolder/{go.mod,go.sum} extensions/javascript/{go.mod,go.sum}
   git diff-files --quiet ||  { echo "error: uncommitted changes"; exit 1;}

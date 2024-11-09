@@ -1,4 +1,4 @@
-module github.com/TBD54566975/scaffolder
+module github.com/block/scaffolder
 
 go 1.22.2
 

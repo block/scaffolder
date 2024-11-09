@@ -9,7 +9,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/TBD54566975/scaffolder"
+	"github.com/block/scaffolder"
 )
 
 type config struct {

@@ -7,8 +7,8 @@ import (
 
 	"github.com/alecthomas/assert/v2"
 
-	"github.com/TBD54566975/scaffolder"
-	"github.com/TBD54566975/scaffolder/scaffoldertest"
+	"github.com/block/scaffolder"
+	"github.com/block/scaffolder/scaffoldertest"
 )
 
 func TestScaffolder(t *testing.T) {

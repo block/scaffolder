@@ -1,6 +1,6 @@
 # A general-purpose project scaffolding library and tool inspired by [cookiecutter]
 
-[![stability-experimental](https://img.shields.io/badge/stability-experimental-orange.svg)](https://github.com/mkenney/software-guides/blob/master/STABILITY-BADGES.md#experimental) [![Go Reference](https://pkg.go.dev/badge/github.com/TBD54566975/scaffolder.svg)](https://pkg.go.dev/github.com/TBD54566975/scaffolder) [![CI](https://github.com/TBD54566975/scaffolder/actions/workflows/ci.yml/badge.svg)](https://github.com/TBD54566975/scaffolder/actions/workflows/ci.yml)
+[![stability-experimental](https://img.shields.io/badge/stability-experimental-orange.svg)](https://github.com/mkenney/software-guides/blob/master/STABILITY-BADGES.md#experimental) [![Go Reference](https://pkg.go.dev/badge/github.com/block/scaffolder.svg)](https://pkg.go.dev/github.com/block/scaffolder) [![CI](https://github.com/block/scaffolder/actions/workflows/ci.yml/badge.svg)](https://github.com/block/scaffolder/actions/workflows/ci.yml)
 
 Scaffolder evaluates the scaffolding files at the given destination against
 ctx using the following rules:

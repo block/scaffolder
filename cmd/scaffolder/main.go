@@ -10,8 +10,8 @@ import (
 	"github.com/alecthomas/kong"
 	"github.com/iancoleman/strcase"
 
-	"github.com/TBD54566975/scaffolder"
-	"github.com/TBD54566975/scaffolder/extensions/javascript"
+	"github.com/block/scaffolder"
+	"github.com/block/scaffolder/extensions/javascript"
 )
 
 var version string = "dev"
