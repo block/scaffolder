@@ -2,35 +2,33 @@ version: 2
 project_name: scaffolder
 release:
   github:
-    owner: TBD54566975
+    owner: block
     name: scaffolder
 brews:
-  -
-    install: bin.install "scaffolder"
+  - install: bin.install "scaffolder"
 env:
   - CGO_ENABLED=0
 builds:
-- goos:
-    - linux
-    - darwin
-    - windows
-  goarch:
-    - arm64
-    - amd64
-  goarm:
-    - "6"
-  dir: ./cmd/scaffolder
-  main: .
-  ldflags: -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
-  binary: scaffolder
+  - goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - arm64
+      - amd64
+    goarm:
+      - "6"
+    dir: ./cmd/scaffolder
+    main: .
+    ldflags: -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+    binary: scaffolder
 archives:
-  -
-    format: tar.gz
-    name_template: '{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}'
+  - format: tar.gz
+    name_template: "{{ .Binary }}-{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}"
     files:
       - LICENSE
       - README*
 snapshot:
   version_template: SNAPSHOT-{{ .Commit }}
 checksum:
-  name_template: '{{ .ProjectName }}-{{ .Version }}-checksums.txt'
+  name_template: "{{ .ProjectName }}-{{ .Version }}-checksums.txt"
