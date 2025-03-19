@@ -14,7 +14,7 @@ import (
 	"github.com/block/scaffolder/extensions/javascript"
 )
 
-var version string = "dev"
+var version = "dev"
 
 var cli struct {
 	Version  kong.VersionFlag `help:"Show version."`
@@ -24,7 +24,7 @@ var cli struct {
 }
 
 func main() {
-	kctx := kong.Parse(&cli, kong.Vars{"version": version})
+	kctx := kong.Parse(&cli, kong.Vars{"version": version}, kong.Description(scaffolder.About()))
 	context := json.RawMessage{}
 	if cli.JSON != nil {
 		if err := json.NewDecoder(cli.JSON).Decode(&context); err != nil {

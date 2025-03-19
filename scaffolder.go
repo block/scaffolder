@@ -3,6 +3,7 @@
 package scaffolder
 
 import (
+	_ "embed"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -12,6 +13,15 @@ import (
 	"strings"
 	"text/template"
 )
+
+//
+//go:embed README.md
+var about string
+
+// About returns text describing how scaffolder works.
+func About() string {
+	return strings.Join(strings.Split(about, "\n---")[1:], "\n---")
+}
 
 const recurseFuncName = "push"
 

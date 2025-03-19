@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+
+go build -o "$TMPDIR/scaffolder" github.com/block/scaffolder/cmd/scaffolder
+exec "$TMPDIR/scaffolder" "$@"
