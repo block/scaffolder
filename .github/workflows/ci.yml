@@ -11,8 +11,8 @@ jobs:
     env:
       GOPROXY: direct
     steps:
-      - uses: actions/checkout@v4
-      - uses: cashapp/activate-hermit@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: cashapp/activate-hermit@e49f5cb4dd64ff0b0b659d1d8df499595451155a # v1
       - run: |
           find . -name go.mod | grep -v /testdata | xargs -n1 dirname | while read dir; do (
             cd "$dir"
@@ -26,8 +26,8 @@ jobs:
     env:
       GOPROXY: direct
     steps:
-      - uses: actions/checkout@v4
-      - uses: cashapp/activate-hermit@v1
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+      - uses: cashapp/activate-hermit@e49f5cb4dd64ff0b0b659d1d8df499595451155a # v1
       - run: |
           find . -name go.mod | grep -v /testdata | xargs -n1 dirname | while read dir; do (
             cd "$dir"
@@ -41,10 +41,10 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
-      - uses: cashapp/activate-hermit@v1
+      - uses: cashapp/activate-hermit@e49f5cb4dd64ff0b0b659d1d8df499595451155a # v1
       - uses: charlesthomas/github-action-svu@v1.0.5+2.1.1
         id: svu
         env:
