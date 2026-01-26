@@ -20,18 +20,21 @@ var cli struct {
 	Version  kong.VersionFlag `help:"Show version."`
 	JSON     *os.File         `help:"JSON file containing the context to use."`
 	Template string           `arg:"" help:"Template directory." type:"existingdir"`
-	Dest     string           `arg:"" help:"Destination directory to scaffold." type:"existingdir"`
+	Dest     string           `arg:"" help:"Destination directory to scaffold."`
 }
 
 func main() {
 	kctx := kong.Parse(&cli, kong.Vars{"version": version}, kong.Description(scaffolder.About()))
-	context := json.RawMessage{}
+	var context any
 	if cli.JSON != nil {
-		if err := json.NewDecoder(cli.JSON).Decode(&context); err != nil {
-			kctx.FatalIfErrorf(err, "failed to decode JSON")
-		}
+		err := json.NewDecoder(cli.JSON).Decode(&context)
+		kctx.FatalIfErrorf(err, "failed to decode JSON")
 	}
-	err := scaffolder.Scaffold(cli.Template, cli.Template, context, scaffolder.Functions(template.FuncMap{
+
+	err := os.MkdirAll(cli.Dest, 0750)
+	kctx.FatalIfErrorf(err)
+
+	err = scaffolder.Scaffold(cli.Template, cli.Dest, context, scaffolder.Functions(template.FuncMap{
 		"snake":          strcase.ToSnake,
 		"screamingSnake": strcase.ToScreamingSnake,
 		"camel":          strcase.ToCamel,

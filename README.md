@@ -6,8 +6,7 @@
 
 ---
 
-Scaffolder evaluates the scaffolding files at the given desScaffolder evaluates a template of directories and files into a destination using JSON context using the following
-rules:
+Scaffolder recursively evaluates a directory hierarchy of templates into a destination using JSON as the template context. It follows these rules:
 
 - Templates are evaluated using the Go template engine.
 - Both path names and file contents are evaluated.
