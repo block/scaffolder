@@ -8,7 +8,7 @@ require (
 	github.com/block/getit v0.1.0
 	github.com/dop251/goja v0.0.0-20250630131328-58d95d85e994
 	github.com/iancoleman/strcase v0.3.0
-	golang.org/x/text v0.3.8
+	golang.org/x/text v0.33.0
 )
 
 require (
