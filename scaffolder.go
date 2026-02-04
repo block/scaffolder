@@ -3,6 +3,7 @@
 package scaffolder
 
 import (
+	"context"
 	_ "embed"
 	"fmt"
 	"io/fs"
@@ -12,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"text/template"
+
+	"github.com/block/getit"
 )
 
 //
@@ -28,9 +31,10 @@ const recurseFuncName = "push"
 type scaffoldOptions struct {
 	Config
 	plugins []Extension
+	ctx     context.Context
 }
 
-// Extension's allow the scaffolder to be extended.
+// Extension allows the scaffolder to be extended.
 type Extension interface {
 	Extend(mutableConfig *Config) error
 	AfterEach(path string) error
@@ -40,13 +44,13 @@ type Extension interface {
 type ExtensionFunc func(mutableConfig *Config) error
 
 func (f ExtensionFunc) Extend(mutableConfig *Config) error { return f(mutableConfig) }
-func (f ExtensionFunc) AfterEach(path string) error        { return nil }
+func (f ExtensionFunc) AfterEach(_ string) error           { return nil }
 
 // AfterEachExtensionFunc is a convenience type for creating an Extension.AfterEach from a function.
 type AfterEachExtensionFunc func(path string) error
 
-func (f AfterEachExtensionFunc) Extend(mutableConfig *Config) error { return nil }
-func (f AfterEachExtensionFunc) AfterEach(path string) error        { return f(path) }
+func (f AfterEachExtensionFunc) Extend(_ *Config) error      { return nil }
+func (f AfterEachExtensionFunc) AfterEach(path string) error { return f(path) }
 
 // Option is a function that modifies the behaviour of the scaffolder.
 type Option func(*scaffoldOptions)
@@ -73,9 +77,7 @@ func (c *Config) Target() string { return c.target }
 // Functions adds functions to use in scaffolding templates.
 func Functions(funcs FuncMap) Option {
 	return func(o *scaffoldOptions) {
-		for k, v := range funcs {
-			o.Funcs[k] = v
-		}
+		maps.Copy(o.Funcs, funcs)
 	}
 }
 
@@ -98,6 +100,13 @@ func Exclude(paths ...string) Option {
 	}
 }
 
+// WithContext sets the context for remote source fetching via getit.
+func WithContext(ctx context.Context) Option {
+	return func(so *scaffoldOptions) {
+		so.ctx = ctx
+	}
+}
+
 // AfterEach configures Scaffolder to call "after" for each file or directory
 // created.
 //
@@ -112,6 +121,15 @@ func AfterEach(after func(path string) error) Option {
 
 // Scaffold evaluates the scaffolding files at the given source using ctx, while
 // copying them into destination.
+//
+// The source can be a local directory path or a remote source supported by getit:
+//   - git+https://github.com/user/repo
+//   - git+ssh://github.com/user/repo
+//   - github.com/user/repo
+//   - user/repo (GitHub shorthand)
+//   - https://example.com/archive.tar.gz
+//
+// For remote sources, use WithContext to provide a context for cancellation.
 func Scaffold(source, destination string, ctx any, options ...Option) error {
 	opts := scaffoldOptions{
 		Config: Config{
@@ -119,7 +137,7 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 			target:  destination,
 			Context: ctx,
 			Funcs: FuncMap{
-				recurseFuncName: func(name string, ctx any) (string, error) { panic("not implemented") },
+				recurseFuncName: func(_ string, _ any) (string, error) { panic("not implemented") },
 			},
 		},
 	}
@@ -133,12 +151,22 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 		}
 	}
 
+	localSource, cleanup, err := resolveSource(opts.ctx, source)
+	if err != nil {
+		return fmt.Errorf("failed to resolve source: %w", err)
+	}
+	if cleanup != nil {
+		defer cleanup()
+	}
+
+	opts.source = localSource
+
 	s := &state{
 		scaffoldOptions:  opts,
 		deferredSymlinks: map[string]string{},
 	}
 
-	if err := s.scaffold(source, destination, ctx); err != nil {
+	if err := s.scaffold(localSource, destination, ctx); err != nil {
 		return fmt.Errorf("failed to scaffold: %w", err)
 	}
 
@@ -148,6 +176,42 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 		}
 	}
 	return nil
+}
+
+func resolveSource(ctx context.Context, source string) (localPath string, cleanup func(), err error) {
+	if info, err := os.Stat(source); err == nil && info.IsDir() {
+		return source, nil, nil
+	}
+
+	_, resolved, err := getit.Resolve(source)
+	if err != nil {
+		return source, nil, nil //nolint:nilerr
+	}
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	tmpDir, err := os.MkdirTemp("", "scaffolder-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+	}
+
+	cleanup = func() { _ = os.RemoveAll(tmpDir) }
+
+	if err := getit.Fetch(ctx, source, tmpDir); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("failed to fetch source: %w", err)
+	}
+
+	_ = os.RemoveAll(filepath.Join(tmpDir, ".git"))
+
+	localPath = tmpDir
+	if resolved.SubDir != "" {
+		localPath = filepath.Join(tmpDir, resolved.SubDir)
+	}
+
+	return localPath, cleanup, nil
 }
 
 type state struct {
@@ -166,7 +230,10 @@ func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
 nextEntry:
 	for _, entry := range entries {
 		srcPath := filepath.Join(srcDir, entry.Name())
-		relPath, _ := filepath.Rel(s.source, srcPath) // Can't fail.
+		relPath, err := filepath.Rel(s.source, srcPath)
+		if err != nil {
+			return fmt.Errorf("failed to compute relative path: %w", err)
+		}
 		for _, exclude := range s.Exclude {
 			if matched, err := regexp.MatchString(exclude, relPath); err != nil {
 				return fmt.Errorf("invalid exclude pattern %q: %w", exclude, err)

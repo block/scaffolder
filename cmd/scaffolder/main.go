@@ -9,6 +9,8 @@ import (
 
 	"github.com/alecthomas/kong"
 	"github.com/iancoleman/strcase"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 
 	"github.com/block/scaffolder"
 	"github.com/block/scaffolder/extensions/javascript"
@@ -16,9 +18,30 @@ import (
 
 var version = "dev"
 
+// JSONSource can be either a file path or a direct JSON string.
+type JSONSource struct {
+	Value any
+}
+
+func (j *JSONSource) UnmarshalText(text []byte) error {
+	s := string(text)
+	trimmed := strings.TrimSpace(s)
+	// If it looks like JSON (starts with { or [), parse directly
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return json.Unmarshal(text, &j.Value)
+	}
+	// Otherwise treat as a file path
+	f, err := os.Open(s)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return json.NewDecoder(f).Decode(&j.Value)
+}
+
 var cli struct {
 	Version  kong.VersionFlag `help:"Show version."`
-	JSON     *os.File         `help:"JSON file containing the context to use."`
+	JSON     *JSONSource      `help:"JSON file path or direct JSON string."`
 	Template string           `arg:"" help:"Template directory." type:"existingdir"`
 	Dest     string           `arg:"" help:"Destination directory to scaffold."`
 }
@@ -27,8 +50,7 @@ func main() {
 	kctx := kong.Parse(&cli, kong.Vars{"version": version}, kong.Description(scaffolder.About()))
 	var context any
 	if cli.JSON != nil {
-		err := json.NewDecoder(cli.JSON).Decode(&context)
-		kctx.FatalIfErrorf(err, "failed to decode JSON")
+		context = cli.JSON.Value
 	}
 
 	err := os.MkdirAll(cli.Dest, 0750)
@@ -43,7 +65,7 @@ func main() {
 		"screamingKebab": strcase.ToScreamingKebab,
 		"upper":          strings.ToUpper,
 		"lower":          strings.ToLower,
-		"title":          strings.Title,
+		"title":          cases.Title(language.English).String,
 		"typename": func(v any) string {
 			return reflect.Indirect(reflect.ValueOf(v)).Type().Name()
 		},

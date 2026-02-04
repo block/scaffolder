@@ -68,10 +68,10 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 		if err := vm.Set("context", mutableConfig.Context); err != nil {
 			return err
 		}
-		scriptPath := filepath.Join(mutableConfig.Source(), scriptPath)
-		if script, err := os.ReadFile(scriptPath); err == nil {
-			if _, err := vm.RunScript(scriptPath, string(script)); err != nil {
-				return fmt.Errorf("failed to run %s: %w", scriptPath, err)
+		fullScriptPath := filepath.Join(mutableConfig.Source(), scriptPath)
+		if script, err := os.ReadFile(fullScriptPath); err == nil {
+			if _, err := vm.RunScript(fullScriptPath, string(script)); err != nil {
+				return fmt.Errorf("failed to run %s: %w", fullScriptPath, err)
 			}
 		}
 
@@ -88,7 +88,7 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 			}
 
 			// Go functions are exported as is, JS functions are wrapped in a go function that calls them.
-			isJsFunc := typ.NumIn() == 1 && typ.In(0) == reflect.TypeOf(goja.FunctionCall{})
+			isJsFunc := typ.NumIn() == 1 && typ.In(0) == reflect.TypeFor[goja.FunctionCall]()
 
 			// Go function, expose it directly.
 			if !isJsFunc {

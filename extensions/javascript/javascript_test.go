@@ -1,4 +1,4 @@
-package javascript
+package javascript_test
 
 import (
 	"testing"
@@ -6,6 +6,7 @@ import (
 	"github.com/alecthomas/assert/v2"
 
 	"github.com/block/scaffolder"
+	"github.com/block/scaffolder/extensions/javascript"
 	"github.com/block/scaffolder/scaffoldertest"
 )
 
@@ -19,7 +20,7 @@ func TestExtension(t *testing.T) {
 		Name: "Alice",
 	},
 		scaffolder.Exclude("^go.mod$"),
-		scaffolder.Extend(Extension("template.js")),
+		scaffolder.Extend(javascript.Extension("template.js")),
 		scaffolder.Functions(scaffolder.FuncMap{
 			"goHello": func(c Context) string {
 				return "Hello " + c.Name
