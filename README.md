@@ -21,29 +21,53 @@ Scaffolder recursively evaluates a directory hierarchy of templates into a desti
 - The following functions are available as Go template functions: "snake", "screamingSnake", "camel", "lowerCamel",
   "kebab", "screamingKebab", "upper", "lower", "title",
 
+## Usage
+
+```
+scaffolder --json '{...}' <source> <dest>
+scaffolder --json file.json <source> <dest>
+```
+
+Where `<source>` can be any URL supported by [getit](https://github.com/block/getit).
+
+eg.
+
+```
+scaffolder --json '{"name": "Bob"}' git+https://github.com/foo/bar ./dest
+```
+
+## Example
 
 For example, given the following files and directories as the template:
 
-	template/
-	  {{ range .modules }}{{ push .name  . }}{{ end }}/
-	    file.txt
+```
+template/
+  {{ range .modules }}{{ push .name  . }}{{ end }}/
+	file.txt
+```
 
 And the context "context.json":
 
-    {
-      "modules": [
-        {"name": "module1", "path": "path1"},
-        {"name": "module2", "path": "path2"}
-      ]
-    }
+```json
+{
+  "modules": [
+	{"name": "module1", "path": "path1"},
+	{"name": "module2", "path": "path2"}
+  ]
+}
+```
 
 Running scaffolder with:
 
-    scaffolder --json context.json --template template --dest dest
+```
+scaffolder --json context.json ./template ./dest
+```
 
 The output "dest" directory will contain the following files and directories:
 
-    module1/
-      file.txt
-    module2/
-      file.txt
+```
+module1/
+  file.txt
+module2/
+  file.txt
+```
