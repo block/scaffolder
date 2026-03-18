@@ -52,8 +52,9 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 		option(conf)
 	}
 	return scaffolder.ExtensionFunc(func(mutableConfig *scaffolder.Config) error {
-		// Exclude the script from the output.
-		mutableConfig.Exclude = append(mutableConfig.Exclude, "^"+regexp.QuoteMeta(scriptPath)+"$")
+		if !filepath.IsAbs(scriptPath) {
+			mutableConfig.Exclude = append(mutableConfig.Exclude, "^"+regexp.QuoteMeta(scriptPath)+"$")
+		}
 
 		vm := goja.New()
 		vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
@@ -68,7 +69,15 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 		if err := vm.Set("context", mutableConfig.Context); err != nil {
 			return err
 		}
-		fullScriptPath := filepath.Join(mutableConfig.Source(), scriptPath)
+		var fullScriptPath string
+		if filepath.IsAbs(scriptPath) {
+			fullScriptPath = scriptPath
+			if rel, err := filepath.Rel(mutableConfig.Source(), scriptPath); err == nil {
+				mutableConfig.Exclude = append(mutableConfig.Exclude, "^"+regexp.QuoteMeta(rel)+"$")
+			}
+		} else {
+			fullScriptPath = filepath.Join(mutableConfig.Source(), scriptPath)
+		}
 		if script, err := os.ReadFile(fullScriptPath); err == nil {
 			if _, err := vm.RunScript(fullScriptPath, string(script)); err != nil {
 				return fmt.Errorf("failed to run %s: %w", fullScriptPath, err)
