@@ -42,6 +42,7 @@ func (j *JSONSource) UnmarshalText(text []byte) error {
 var cli struct {
 	Version  kong.VersionFlag `help:"Show version."`
 	JSON     *JSONSource      `help:"JSON file path or direct JSON string."`
+	Script   string           `help:"Path to a JavaScript file to use for template functions." type:"existingfile" optional:""`
 	Template string           `arg:"" help:"Template directory." type:"existingdir"`
 	Dest     string           `arg:"" help:"Destination directory to scaffold."`
 }
@@ -69,6 +70,13 @@ func main() {
 		"typename": func(v any) string {
 			return reflect.Indirect(reflect.ValueOf(v)).Type().Name()
 		},
-	}), scaffolder.Extend(javascript.Extension("template.js")))
+	}), scaffolder.Extend(javascript.Extension(scriptPath())))
 	kctx.FatalIfErrorf(err)
+}
+
+func scriptPath() string {
+	if cli.Script != "" {
+		return cli.Script
+	}
+	return "template.js"
 }
