@@ -4,11 +4,11 @@ go 1.25.6
 
 require (
 	github.com/alecthomas/assert/v2 v2.11.0
-	github.com/alecthomas/kong v1.13.0
-	github.com/block/getit v0.1.0
+	github.com/alecthomas/kong v1.14.0
+	github.com/block/getit v0.1.1
 	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
 	github.com/iancoleman/strcase v0.3.0
-	golang.org/x/text v0.33.0
+	golang.org/x/text v0.35.0
 )
 
 require (
@@ -17,4 +17,5 @@ require (
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
+	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
 )
