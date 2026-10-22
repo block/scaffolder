@@ -32,7 +32,6 @@ const recurseFuncName = "push"
 type scaffoldOptions struct {
 	Config
 	plugins []Extension
-	ctx     context.Context
 }
 
 // Extension allows the scaffolder to be extended.
@@ -68,11 +67,11 @@ type Config struct {
 	Funcs   FuncMap
 	Exclude []string
 
-	source string
+	source fs.FS
 	target string
 }
 
-func (c *Config) Source() string { return c.source }
+func (c *Config) Source() fs.FS  { return c.source }
 func (c *Config) Target() string { return c.target }
 
 // Functions adds functions to use in scaffolding templates.
@@ -94,17 +93,11 @@ func Extend(plugin Extension) Option {
 
 // Exclude the given regex paths from scaffolding.
 //
-// Matching occurs before template evaluation and .tmpl suffix removal.
+// Paths are slash-separated and relative to the source root. Matching occurs
+// before template evaluation and .tmpl suffix removal.
 func Exclude(paths ...string) Option {
 	return func(so *scaffoldOptions) {
 		so.Exclude = append(so.Exclude, paths...)
-	}
-}
-
-// WithContext sets the context for remote source fetching via getit.
-func WithContext(ctx context.Context) Option {
-	return func(so *scaffoldOptions) {
-		so.ctx = ctx
 	}
 }
 
@@ -120,57 +113,13 @@ func AfterEach(after func(path string) error) Option {
 	}
 }
 
-// Scaffold evaluates the scaffolding files at the given source using ctx, while
-// copying them into destination.
+// Scaffold evaluates the scaffolding files in source using ctx, while copying
+// them into destination.
 //
-// The source can be a local directory path or a remote source supported by getit:
-//   - git+https://github.com/user/repo
-//   - git+ssh://github.com/user/repo
-//   - github.com/user/repo
-//   - user/repo (GitHub shorthand)
-//   - https://example.com/archive.tar.gz
-//
-// For remote sources, use WithContext to provide a context for cancellation.
-func Scaffold(source, destination string, ctx any, options ...Option) error {
-	opts := newOptions(source, destination, ctx, options)
-
-	for _, plugin := range opts.plugins {
-		if err := plugin.Extend(&opts.Config); err != nil {
-			return fmt.Errorf("failed to extend scaffolder: %w", err)
-		}
-	}
-
-	localSource, cleanup, err := resolveSource(opts.ctx, source)
-	if err != nil {
-		return fmt.Errorf("failed to resolve source: %w", err)
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	opts.source = localSource
-
-	return scaffoldFS(opts, os.DirFS(localSource), destination, ctx)
-}
-
-// ScaffoldFS evaluates the scaffolding files in source using ctx, while
-// copying them into destination.
-//
-// This allows templates to be embedded in a binary with embed.FS. Files keep
-// the permissions reported by source, and symbolic links are only supported
-// if source implements fs.ReadLinkFS. Config.Source returns "" for an fs.FS
-// source.
-func ScaffoldFS(source fs.FS, destination string, ctx any, options ...Option) error {
-	opts := newOptions("", destination, ctx, options)
-	for _, plugin := range opts.plugins {
-		if err := plugin.Extend(&opts.Config); err != nil {
-			return fmt.Errorf("failed to extend scaffolder: %w", err)
-		}
-	}
-	return scaffoldFS(opts, source, destination, ctx)
-}
-
-func newOptions(source, destination string, ctx any, options []Option) scaffoldOptions {
+// Files keep the permissions reported by source, and symbolic links are only
+// supported if source implements fs.ReadLinkFS. Use Open for a local directory
+// or a remote source.
+func Scaffold(source fs.FS, destination string, ctx any, options ...Option) error {
 	opts := scaffoldOptions{
 		Config: Config{
 			source:  source,
@@ -184,13 +133,15 @@ func newOptions(source, destination string, ctx any, options []Option) scaffoldO
 	for _, option := range options {
 		option(&opts)
 	}
-	return opts
-}
 
-func scaffoldFS(opts scaffoldOptions, source fs.FS, destination string, ctx any) error {
+	for _, plugin := range opts.plugins {
+		if err := plugin.Extend(&opts.Config); err != nil {
+			return fmt.Errorf("failed to extend scaffolder: %w", err)
+		}
+	}
+
 	s := &state{
 		scaffoldOptions:  opts,
-		fsys:             source,
 		deferredSymlinks: map[string]string{},
 	}
 
@@ -206,55 +157,55 @@ func scaffoldFS(opts scaffoldOptions, source fs.FS, destination string, ctx any)
 	return nil
 }
 
-func resolveSource(ctx context.Context, source string) (localPath string, cleanup func(), err error) {
+// Open returns the scaffolding files at source as an fs.FS.
+//
+// The source can be a local directory path or a remote source supported by getit:
+//   - git+https://github.com/user/repo
+//   - git+ssh://github.com/user/repo
+//   - github.com/user/repo
+//   - user/repo (GitHub shorthand)
+//   - https://example.com/archive.tar.gz
+//
+// Remote sources are fetched into a temporary directory that cleanup removes.
+func Open(ctx context.Context, source string) (fsys fs.FS, cleanup func(), err error) {
 	if info, err := os.Stat(source); err == nil && info.IsDir() {
-		return source, nil, nil
+		return os.DirFS(source), func() {}, nil
 	}
 
 	_, resolved, err := getit.Resolve(source)
 	if err != nil {
-		return source, nil, nil //nolint:nilerr
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
+		return nil, nil, fmt.Errorf("%s is neither a directory nor a remote source: %w", source, err)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "scaffolder-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
 	cleanup = func() { _ = os.RemoveAll(tmpDir) }
 
 	if err := getit.Fetch(ctx, source, tmpDir); err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("failed to fetch source: %w", err)
+		return nil, nil, fmt.Errorf("failed to fetch source: %w", err)
 	}
 
 	_ = os.RemoveAll(filepath.Join(tmpDir, ".git"))
 
-	localPath = tmpDir
+	localPath := tmpDir
 	if resolved.SubDir != "" {
 		localPath = filepath.Join(tmpDir, resolved.SubDir)
 	}
 
-	return localPath, cleanup, nil
+	return os.DirFS(localPath), cleanup, nil
 }
 
 type state struct {
 	scaffoldOptions
-	fsys             fs.FS
 	deferredSymlinks map[string]string
 }
 
-// sourcePath returns the OS path of name in the source, for error messages.
-func (s *state) sourcePath(name string) string {
-	return filepath.Join(s.source, filepath.FromSlash(name))
-}
-
 func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
-	entries, err := fs.ReadDir(s.fsys, srcDir)
+	entries, err := fs.ReadDir(s.source, srcDir)
 	if err != nil {
 		return err
 	}
@@ -264,9 +215,8 @@ func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
 nextEntry:
 	for _, entry := range entries {
 		srcPath := path.Join(srcDir, entry.Name())
-		relPath := filepath.FromSlash(srcPath)
 		for _, exclude := range s.Exclude {
-			if matched, err := regexp.MatchString(exclude, relPath); err != nil {
+			if matched, err := regexp.MatchString(exclude, srcPath); err != nil {
 				return fmt.Errorf("invalid exclude pattern %q: %w", exclude, err)
 			} else if matched {
 				continue nextEntry
@@ -280,7 +230,7 @@ nextEntry:
 			recursiveContext[name] = ctx
 			return name + "\000"
 		}
-		dstName, err := evaluate(s.sourcePath(srcPath), entry.Name(), ctx, funcs)
+		dstName, err := evaluate(srcPath, entry.Name(), ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate path name %q: %w", filepath.Join(dstDir, entry.Name()), err)
 		}
@@ -313,12 +263,12 @@ nextEntry:
 func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any, funcs template.FuncMap) error {
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
-		target, err := fs.ReadLink(s.fsys, srcPath)
+		target, err := fs.ReadLink(s.source, srcPath)
 		if err != nil {
 			return fmt.Errorf("failed to read symlink: %w", err)
 		}
 
-		target, err = evaluate(s.sourcePath(srcPath), target, ctx, funcs)
+		target, err = evaluate(srcPath, target, ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate symlink target: %w", err)
 		}
@@ -346,13 +296,13 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		return s.scaffold(srcPath, dstPath, ctx)
 
 	case info.Mode().IsRegular():
-		template, err := fs.ReadFile(s.fsys, srcPath)
+		template, err := fs.ReadFile(s.source, srcPath)
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
 		}
-		content, err := evaluate(s.sourcePath(srcPath), string(template), ctx, funcs)
+		content, err := evaluate(srcPath, string(template), ctx, funcs)
 		if err != nil {
-			return fmt.Errorf("%s: failed to evaluate template: %w", s.sourcePath(srcPath), err)
+			return fmt.Errorf("%s: failed to evaluate template: %w", srcPath, err)
 		}
 		err = os.WriteFile(dstPath, []byte(content), info.Mode())
 		if err != nil {
@@ -365,7 +315,7 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		}
 
 	default:
-		return fmt.Errorf("%s: unsupported file type %s", s.sourcePath(srcPath), info.Mode())
+		return fmt.Errorf("%s: unsupported file type %s", srcPath, info.Mode())
 	}
 	return nil
 }

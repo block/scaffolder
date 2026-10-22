@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 
@@ -57,7 +58,7 @@ func main() {
 	err := os.MkdirAll(cli.Dest, 0750)
 	kctx.FatalIfErrorf(err)
 
-	err = scaffolder.Scaffold(cli.Template, cli.Dest, context, scaffolder.Functions(template.FuncMap{
+	err = scaffolder.Scaffold(os.DirFS(cli.Template), cli.Dest, context, scaffolder.Functions(template.FuncMap{
 		"snake":          strcase.ToSnake,
 		"screamingSnake": strcase.ToScreamingSnake,
 		"camel":          strcase.ToCamel,
@@ -74,9 +75,18 @@ func main() {
 	kctx.FatalIfErrorf(err)
 }
 
+// scriptPath returns the script relative to the template when it is inside it,
+// so it is excluded from the output.
 func scriptPath() string {
-	if cli.Script != "" {
+	if cli.Script == "" {
+		return "template.js"
+	}
+	template, err := filepath.Abs(cli.Template)
+	if err != nil {
 		return cli.Script
 	}
-	return "template.js"
+	if rel, err := filepath.Rel(template, cli.Script); err == nil && filepath.IsLocal(rel) {
+		return filepath.ToSlash(rel)
+	}
+	return cli.Script
 }

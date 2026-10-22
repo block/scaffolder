@@ -18,7 +18,7 @@ type Context struct {
 
 func TestExtension(t *testing.T) {
 	dest := t.TempDir()
-	err := scaffolder.Scaffold("testdata", dest, Context{
+	err := scaffolder.Scaffold(os.DirFS("testdata"), dest, Context{
 		Name: "Alice",
 	},
 		scaffolder.Exclude("^go.mod$"),
@@ -50,7 +50,7 @@ function hello(c) {
 	assert.NoError(t, err)
 
 	dest := t.TempDir()
-	err = scaffolder.Scaffold("testdata", dest, Context{
+	err = scaffolder.Scaffold(os.DirFS("testdata"), dest, Context{
 		Name: "Alice",
 	},
 		scaffolder.Exclude("^go.mod$", "^template\\.js$"),

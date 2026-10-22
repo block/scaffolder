@@ -2,6 +2,7 @@ package javascript
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -36,9 +37,10 @@ func WithLogger(logger func(args ...any)) Option {
 // Extension is a scaffolder extension that allows the use of end-user-provided
 // JavaScript code to write template functions.
 //
-// The extension will execute the JS file scriptPath in the source directory
-// if present. If you wish to include a file named scriptPath in the generated
-// output, you can name it scriptPath.tmpl.
+// The extension will execute the JS file scriptPath, relative to the source
+// root, if present. If you wish to include a file named scriptPath in the
+// generated output, you can name it scriptPath.tmpl. An absolute scriptPath is
+// read from the local file system.
 //
 // A global variable named context will be available in the JS VM. It will
 // contain the scaffolder.Config.Context value.
@@ -52,10 +54,6 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 		option(conf)
 	}
 	return scaffolder.ExtensionFunc(func(mutableConfig *scaffolder.Config) error {
-		if !filepath.IsAbs(scriptPath) {
-			mutableConfig.Exclude = append(mutableConfig.Exclude, "^"+regexp.QuoteMeta(scriptPath)+"$")
-		}
-
 		vm := goja.New()
 		vm.SetFieldNameMapper(goja.UncapFieldNameMapper())
 		for key, value := range mutableConfig.Funcs {
@@ -69,18 +67,17 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 		if err := vm.Set("context", mutableConfig.Context); err != nil {
 			return err
 		}
-		var fullScriptPath string
+		var script []byte
+		var err error
 		if filepath.IsAbs(scriptPath) {
-			fullScriptPath = scriptPath
-			if rel, err := filepath.Rel(mutableConfig.Source(), scriptPath); err == nil {
-				mutableConfig.Exclude = append(mutableConfig.Exclude, "^"+regexp.QuoteMeta(rel)+"$")
-			}
+			script, err = os.ReadFile(scriptPath)
 		} else {
-			fullScriptPath = filepath.Join(mutableConfig.Source(), scriptPath)
+			mutableConfig.Exclude = append(mutableConfig.Exclude, "^"+regexp.QuoteMeta(scriptPath)+"$")
+			script, err = fs.ReadFile(mutableConfig.Source(), scriptPath)
 		}
-		if script, err := os.ReadFile(fullScriptPath); err == nil {
-			if _, err := vm.RunScript(fullScriptPath, string(script)); err != nil {
-				return fmt.Errorf("failed to run %s: %w", fullScriptPath, err)
+		if err == nil {
+			if _, err := vm.RunScript(scriptPath, string(script)); err != nil {
+				return fmt.Errorf("failed to run %s: %w", scriptPath, err)
 			}
 		}
 
