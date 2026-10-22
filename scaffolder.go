@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -131,19 +132,7 @@ func AfterEach(after func(path string) error) Option {
 //
 // For remote sources, use WithContext to provide a context for cancellation.
 func Scaffold(source, destination string, ctx any, options ...Option) error {
-	opts := scaffoldOptions{
-		Config: Config{
-			source:  source,
-			target:  destination,
-			Context: ctx,
-			Funcs: FuncMap{
-				recurseFuncName: func(_ string, _ any) (string, error) { panic("not implemented") },
-			},
-		},
-	}
-	for _, option := range options {
-		option(&opts)
-	}
+	opts := newOptions(source, destination, ctx, options)
 
 	for _, plugin := range opts.plugins {
 		if err := plugin.Extend(&opts.Config); err != nil {
@@ -161,12 +150,51 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 
 	opts.source = localSource
 
+	return scaffoldFS(opts, os.DirFS(localSource), destination, ctx)
+}
+
+// ScaffoldFS evaluates the scaffolding files in source using ctx, while
+// copying them into destination.
+//
+// This allows templates to be embedded in a binary with embed.FS. Files keep
+// the permissions reported by source, and symbolic links are only supported
+// if source implements fs.ReadLinkFS. Config.Source returns "" for an fs.FS
+// source.
+func ScaffoldFS(source fs.FS, destination string, ctx any, options ...Option) error {
+	opts := newOptions("", destination, ctx, options)
+	for _, plugin := range opts.plugins {
+		if err := plugin.Extend(&opts.Config); err != nil {
+			return fmt.Errorf("failed to extend scaffolder: %w", err)
+		}
+	}
+	return scaffoldFS(opts, source, destination, ctx)
+}
+
+func newOptions(source, destination string, ctx any, options []Option) scaffoldOptions {
+	opts := scaffoldOptions{
+		Config: Config{
+			source:  source,
+			target:  destination,
+			Context: ctx,
+			Funcs: FuncMap{
+				recurseFuncName: func(_ string, _ any) (string, error) { panic("not implemented") },
+			},
+		},
+	}
+	for _, option := range options {
+		option(&opts)
+	}
+	return opts
+}
+
+func scaffoldFS(opts scaffoldOptions, source fs.FS, destination string, ctx any) error {
 	s := &state{
 		scaffoldOptions:  opts,
+		fsys:             source,
 		deferredSymlinks: map[string]string{},
 	}
 
-	if err := s.scaffold(localSource, destination, ctx); err != nil {
+	if err := s.scaffold(".", destination, ctx); err != nil {
 		return fmt.Errorf("failed to scaffold: %w", err)
 	}
 
@@ -216,11 +244,17 @@ func resolveSource(ctx context.Context, source string) (localPath string, cleanu
 
 type state struct {
 	scaffoldOptions
+	fsys             fs.FS
 	deferredSymlinks map[string]string
 }
 
+// sourcePath returns the OS path of name in the source, for error messages.
+func (s *state) sourcePath(name string) string {
+	return filepath.Join(s.source, filepath.FromSlash(name))
+}
+
 func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
-	entries, err := os.ReadDir(srcDir)
+	entries, err := fs.ReadDir(s.fsys, srcDir)
 	if err != nil {
 		return err
 	}
@@ -229,11 +263,8 @@ func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
 	}
 nextEntry:
 	for _, entry := range entries {
-		srcPath := filepath.Join(srcDir, entry.Name())
-		relPath, err := filepath.Rel(s.source, srcPath)
-		if err != nil {
-			return fmt.Errorf("failed to compute relative path: %w", err)
-		}
+		srcPath := path.Join(srcDir, entry.Name())
+		relPath := filepath.FromSlash(srcPath)
 		for _, exclude := range s.Exclude {
 			if matched, err := regexp.MatchString(exclude, relPath); err != nil {
 				return fmt.Errorf("invalid exclude pattern %q: %w", exclude, err)
@@ -249,7 +280,7 @@ nextEntry:
 			recursiveContext[name] = ctx
 			return name + "\000"
 		}
-		dstName, err := evaluate(srcPath, entry.Name(), ctx, funcs)
+		dstName, err := evaluate(s.sourcePath(srcPath), entry.Name(), ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate path name %q: %w", filepath.Join(dstDir, entry.Name()), err)
 		}
@@ -282,12 +313,12 @@ nextEntry:
 func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any, funcs template.FuncMap) error {
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
-		target, err := os.Readlink(srcPath)
+		target, err := fs.ReadLink(s.fsys, srcPath)
 		if err != nil {
 			return fmt.Errorf("failed to read symlink: %w", err)
 		}
 
-		target, err = evaluate(srcPath, target, ctx, funcs)
+		target, err = evaluate(s.sourcePath(srcPath), target, ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate symlink target: %w", err)
 		}
@@ -315,13 +346,13 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		return s.scaffold(srcPath, dstPath, ctx)
 
 	case info.Mode().IsRegular():
-		template, err := os.ReadFile(srcPath)
+		template, err := fs.ReadFile(s.fsys, srcPath)
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
 		}
-		content, err := evaluate(srcPath, string(template), ctx, funcs)
+		content, err := evaluate(s.sourcePath(srcPath), string(template), ctx, funcs)
 		if err != nil {
-			return fmt.Errorf("%s: failed to evaluate template: %w", srcPath, err)
+			return fmt.Errorf("%s: failed to evaluate template: %w", s.sourcePath(srcPath), err)
 		}
 		err = os.WriteFile(dstPath, []byte(content), info.Mode())
 		if err != nil {
@@ -334,7 +365,7 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		}
 
 	default:
-		return fmt.Errorf("%s: unsupported file type %s", srcPath, info.Mode())
+		return fmt.Errorf("%s: unsupported file type %s", s.sourcePath(srcPath), info.Mode())
 	}
 	return nil
 }
