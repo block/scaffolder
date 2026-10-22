@@ -32,6 +32,7 @@ const recurseFuncName = "push"
 type scaffoldOptions struct {
 	Config
 	plugins []Extension
+	ctx     context.Context
 }
 
 // Extension allows the scaffolder to be extended.
@@ -101,6 +102,13 @@ func Exclude(paths ...string) Option {
 	}
 }
 
+// WithContext sets a context that cancels scaffolding.
+func WithContext(ctx context.Context) Option {
+	return func(so *scaffoldOptions) {
+		so.ctx = ctx
+	}
+}
+
 // AfterEach configures Scaffolder to call "after" for each file or directory
 // created.
 //
@@ -129,6 +137,7 @@ func Scaffold(source fs.FS, destination string, ctx any, options ...Option) erro
 				recurseFuncName: func(_ string, _ any) (string, error) { panic("not implemented") },
 			},
 		},
+		ctx: context.Background(),
 	}
 	for _, option := range options {
 		option(&opts)
@@ -214,6 +223,9 @@ func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
 	}
 nextEntry:
 	for _, entry := range entries {
+		if err := s.ctx.Err(); err != nil {
+			return err
+		}
 		srcPath := path.Join(srcDir, entry.Name())
 		for _, exclude := range s.Exclude {
 			if matched, err := regexp.MatchString(exclude, srcPath); err != nil {

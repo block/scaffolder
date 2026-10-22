@@ -81,3 +81,10 @@ func TestScaffolderMapFS(t *testing.T) {
 	}
 	scaffoldertest.AssertFilesEqual(t, tmpDir, expect)
 }
+
+func TestScaffolderWithContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := scaffolder.Scaffold(os.DirFS("testdata/template"), filepath.Join(t.TempDir(), "new"), nil, scaffolder.WithContext(ctx))
+	assert.IsError(t, err, context.Canceled)
+}
