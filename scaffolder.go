@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -67,11 +68,11 @@ type Config struct {
 	Funcs   FuncMap
 	Exclude []string
 
-	source string
+	source fs.FS
 	target string
 }
 
-func (c *Config) Source() string { return c.source }
+func (c *Config) Source() fs.FS  { return c.source }
 func (c *Config) Target() string { return c.target }
 
 // Functions adds functions to use in scaffolding templates.
@@ -93,14 +94,15 @@ func Extend(plugin Extension) Option {
 
 // Exclude the given regex paths from scaffolding.
 //
-// Matching occurs before template evaluation and .tmpl suffix removal.
+// Paths are slash-separated and relative to the source root. Matching occurs
+// before template evaluation and .tmpl suffix removal.
 func Exclude(paths ...string) Option {
 	return func(so *scaffoldOptions) {
 		so.Exclude = append(so.Exclude, paths...)
 	}
 }
 
-// WithContext sets the context for remote source fetching via getit.
+// WithContext sets a context that cancels scaffolding.
 func WithContext(ctx context.Context) Option {
 	return func(so *scaffoldOptions) {
 		so.ctx = ctx
@@ -119,18 +121,13 @@ func AfterEach(after func(path string) error) Option {
 	}
 }
 
-// Scaffold evaluates the scaffolding files at the given source using ctx, while
-// copying them into destination.
+// Scaffold evaluates the scaffolding files in source using ctx, while copying
+// them into destination.
 //
-// The source can be a local directory path or a remote source supported by getit:
-//   - git+https://github.com/user/repo
-//   - git+ssh://github.com/user/repo
-//   - github.com/user/repo
-//   - user/repo (GitHub shorthand)
-//   - https://example.com/archive.tar.gz
-//
-// For remote sources, use WithContext to provide a context for cancellation.
-func Scaffold(source, destination string, ctx any, options ...Option) error {
+// Files keep the permissions reported by source, and symbolic links are only
+// supported if source implements fs.ReadLinkFS. Use Open for a local directory
+// or a remote source.
+func Scaffold(source fs.FS, destination string, ctx any, options ...Option) error {
 	opts := scaffoldOptions{
 		Config: Config{
 			source:  source,
@@ -140,6 +137,7 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 				recurseFuncName: func(_ string, _ any) (string, error) { panic("not implemented") },
 			},
 		},
+		ctx: context.Background(),
 	}
 	for _, option := range options {
 		option(&opts)
@@ -151,22 +149,12 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 		}
 	}
 
-	localSource, cleanup, err := resolveSource(opts.ctx, source)
-	if err != nil {
-		return fmt.Errorf("failed to resolve source: %w", err)
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	opts.source = localSource
-
 	s := &state{
 		scaffoldOptions:  opts,
 		deferredSymlinks: map[string]string{},
 	}
 
-	if err := s.scaffold(localSource, destination, ctx); err != nil {
+	if err := s.scaffold(".", destination, ctx); err != nil {
 		return fmt.Errorf("failed to scaffold: %w", err)
 	}
 
@@ -178,40 +166,46 @@ func Scaffold(source, destination string, ctx any, options ...Option) error {
 	return nil
 }
 
-func resolveSource(ctx context.Context, source string) (localPath string, cleanup func(), err error) {
+// Open returns the scaffolding files at source as an fs.FS.
+//
+// The source can be a local directory path or a remote source supported by getit:
+//   - git+https://github.com/user/repo
+//   - git+ssh://github.com/user/repo
+//   - github.com/user/repo
+//   - user/repo (GitHub shorthand)
+//   - https://example.com/archive.tar.gz
+//
+// Remote sources are fetched into a temporary directory that cleanup removes.
+func Open(ctx context.Context, source string) (fsys fs.FS, cleanup func(), err error) {
 	if info, err := os.Stat(source); err == nil && info.IsDir() {
-		return source, nil, nil
+		return os.DirFS(source), func() {}, nil
 	}
 
 	_, resolved, err := getit.Resolve(source)
 	if err != nil {
-		return source, nil, nil //nolint:nilerr
-	}
-
-	if ctx == nil {
-		ctx = context.Background()
+		return nil, nil, fmt.Errorf("%s is neither a directory nor a remote source: %w", source, err)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "scaffolder-*")
 	if err != nil {
-		return "", nil, fmt.Errorf("failed to create temp directory: %w", err)
+		return nil, nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
 	cleanup = func() { _ = os.RemoveAll(tmpDir) }
 
 	if err := getit.Fetch(ctx, source, tmpDir); err != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("failed to fetch source: %w", err)
+		return nil, nil, fmt.Errorf("failed to fetch source: %w", err)
 	}
 
 	_ = os.RemoveAll(filepath.Join(tmpDir, ".git"))
 
-	localPath = tmpDir
+	localPath := tmpDir
 	if resolved.SubDir != "" {
 		localPath = filepath.Join(tmpDir, resolved.SubDir)
 	}
 
-	return localPath, cleanup, nil
+	return os.DirFS(localPath), cleanup, nil
 }
 
 type state struct {
@@ -220,7 +214,7 @@ type state struct {
 }
 
 func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
-	entries, err := os.ReadDir(srcDir)
+	entries, err := fs.ReadDir(s.source, srcDir)
 	if err != nil {
 		return err
 	}
@@ -229,13 +223,12 @@ func (s *state) scaffold(srcDir, dstDir string, ctx any) error {
 	}
 nextEntry:
 	for _, entry := range entries {
-		srcPath := filepath.Join(srcDir, entry.Name())
-		relPath, err := filepath.Rel(s.source, srcPath)
-		if err != nil {
-			return fmt.Errorf("failed to compute relative path: %w", err)
+		if err := s.ctx.Err(); err != nil {
+			return err
 		}
+		srcPath := path.Join(srcDir, entry.Name())
 		for _, exclude := range s.Exclude {
-			if matched, err := regexp.MatchString(exclude, relPath); err != nil {
+			if matched, err := regexp.MatchString(exclude, srcPath); err != nil {
 				return fmt.Errorf("invalid exclude pattern %q: %w", exclude, err)
 			} else if matched {
 				continue nextEntry
@@ -282,7 +275,7 @@ nextEntry:
 func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any, funcs template.FuncMap) error {
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
-		target, err := os.Readlink(srcPath)
+		target, err := fs.ReadLink(s.source, srcPath)
 		if err != nil {
 			return fmt.Errorf("failed to read symlink: %w", err)
 		}
@@ -315,7 +308,7 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		return s.scaffold(srcPath, dstPath, ctx)
 
 	case info.Mode().IsRegular():
-		template, err := os.ReadFile(srcPath)
+		template, err := fs.ReadFile(s.source, srcPath)
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
 		}
