@@ -88,3 +88,46 @@ func TestScaffolderWithContext(t *testing.T) {
 	err := scaffolder.Scaffold(os.DirFS("testdata/template"), filepath.Join(t.TempDir(), "new"), nil, scaffolder.WithContext(ctx))
 	assert.IsError(t, err, context.Canceled)
 }
+
+func TestScaffolderSkip(t *testing.T) {
+	tmpDir := t.TempDir()
+	assert.NoError(t, os.WriteFile(filepath.Join(tmpDir, "kept.txt"), []byte("edited"), 0o600))
+	source := fstest.MapFS{
+		"kept.txt":         {Data: []byte("{{ .Name }}"), Mode: 0o644},
+		"skipped/file.txt": {Data: []byte("{{ .Name }}"), Mode: 0o644},
+		"written.txt":      {Data: []byte("{{ .Name }}"), Mode: 0o644},
+	}
+	err := scaffolder.Scaffold(source, tmpDir, map[string]any{"Name": "test"}, scaffolder.Skip(func(path string) bool {
+		_, err := os.Stat(path)
+		return err == nil || filepath.Base(path) == "skipped"
+	}))
+	assert.NoError(t, err)
+	expect := []scaffoldertest.File{
+		{Name: "kept.txt", Mode: 0o600, Content: "edited"},
+		{Name: "written.txt", Mode: 0o600, Content: "test"},
+	}
+	scaffoldertest.AssertFilesEqual(t, tmpDir, expect)
+}
+
+func TestScaffolderErrorOnMissingKey(t *testing.T) {
+	source := fstest.MapFS{"file.txt": {Data: []byte("{{ .Missing }}"), Mode: 0o644}}
+	err := scaffolder.Scaffold(source, t.TempDir(), map[string]any{}, scaffolder.ErrorOnMissingKey())
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), `map has no entry for key "Missing"`)
+}
+
+func TestScaffolderAfterEachSymlink(t *testing.T) {
+	tmpDir := t.TempDir()
+	source := fstest.MapFS{
+		"file.txt": {Data: []byte("file"), Mode: 0o644},
+		"link":     {Data: []byte("file.txt"), Mode: fs.ModeSymlink},
+	}
+	var created []string
+	err := scaffolder.Scaffold(source, tmpDir, nil, scaffolder.AfterEach(func(path string) error {
+		rel, err := filepath.Rel(tmpDir, path)
+		created = append(created, rel)
+		return err
+	}))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"file.txt", "link"}, created)
+}

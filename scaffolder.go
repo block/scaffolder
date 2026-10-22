@@ -31,8 +31,10 @@ const recurseFuncName = "push"
 
 type scaffoldOptions struct {
 	Config
-	plugins []Extension
-	ctx     context.Context
+	plugins         []Extension
+	skip            []func(path string) bool
+	missingKeyError bool
+	ctx             context.Context
 }
 
 // Extension allows the scaffolder to be extended.
@@ -102,6 +104,25 @@ func Exclude(paths ...string) Option {
 	}
 }
 
+// Skip leaves each destination path that skip reports true for untouched.
+//
+// It is called with the path after template evaluation and .tmpl suffix
+// removal, before anything is written there. A skipped directory is not
+// descended into.
+func Skip(skip func(path string) bool) Option {
+	return func(so *scaffoldOptions) {
+		so.skip = append(so.skip, skip)
+	}
+}
+
+// ErrorOnMissingKey fails scaffolding when a template refers to a map key the
+// context does not have, instead of rendering "<no value>".
+func ErrorOnMissingKey() Option {
+	return func(so *scaffoldOptions) {
+		so.missingKeyError = true
+	}
+}
+
 // WithContext sets a context that cancels scaffolding.
 func WithContext(ctx context.Context) Option {
 	return func(so *scaffoldOptions) {
@@ -109,8 +130,8 @@ func WithContext(ctx context.Context) Option {
 	}
 }
 
-// AfterEach configures Scaffolder to call "after" for each file or directory
-// created.
+// AfterEach configures Scaffolder to call "after" for each file, directory or
+// symlink created.
 //
 // Useful for setting file permissions, etc.
 //
@@ -242,7 +263,7 @@ nextEntry:
 			recursiveContext[name] = ctx
 			return name + "\000"
 		}
-		dstName, err := evaluate(srcPath, entry.Name(), ctx, funcs)
+		dstName, err := s.evaluate(srcPath, entry.Name(), ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate path name %q: %w", filepath.Join(dstDir, entry.Name()), err)
 		}
@@ -273,6 +294,11 @@ nextEntry:
 }
 
 func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any, funcs template.FuncMap) error {
+	for _, skip := range s.skip {
+		if skip(dstPath) {
+			return nil
+		}
+	}
 	switch {
 	case info.Mode()&os.ModeSymlink != 0:
 		target, err := fs.ReadLink(s.source, srcPath)
@@ -280,7 +306,7 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 			return fmt.Errorf("failed to read symlink: %w", err)
 		}
 
-		target, err = evaluate(srcPath, target, ctx, funcs)
+		target, err = s.evaluate(srcPath, target, ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate symlink target: %w", err)
 		}
@@ -312,7 +338,7 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
 		}
-		content, err := evaluate(srcPath, string(template), ctx, funcs)
+		content, err := s.evaluate(srcPath, string(template), ctx, funcs)
 		if err != nil {
 			return fmt.Errorf("%s: failed to evaluate template: %w", srcPath, err)
 		}
@@ -347,11 +373,23 @@ func (s *state) applySymlinks(path string) error {
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to remove symlink target: %w", err)
 	}
-	return os.Symlink(target, path)
+	if err := os.Symlink(target, path); err != nil {
+		return err
+	}
+	for _, plugin := range s.plugins {
+		if err := plugin.AfterEach(path); err != nil {
+			return fmt.Errorf("failed to run after: %w", err)
+		}
+	}
+	return nil
 }
 
-func evaluate(path, tmpl string, ctx any, funcs template.FuncMap) (string, error) {
-	t, err := template.New(path).Funcs(funcs).Parse(tmpl)
+func (s *state) evaluate(path, tmpl string, ctx any, funcs template.FuncMap) (string, error) {
+	t := template.New(path).Funcs(funcs)
+	if s.missingKeyError {
+		t = t.Option("missingkey=error")
+	}
+	t, err := t.Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}

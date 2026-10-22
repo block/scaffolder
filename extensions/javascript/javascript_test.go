@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/fstest"
 
 	"github.com/alecthomas/assert/v2"
 
@@ -65,5 +66,18 @@ function hello(c) {
 	scaffoldertest.AssertFilesEqual(t, dest, []scaffoldertest.File{
 		{Name: "sdrawkcab", Mode: 0600},
 		{Name: "hello.txt", Mode: 0600, Content: "Hello Alice"},
+	})
+}
+
+func TestExtensionReturnsGoValues(t *testing.T) {
+	dest := t.TempDir()
+	source := fstest.MapFS{
+		"template.js": {Data: []byte(`function words(s) { return s.split(" "); }`)},
+		"list.txt":    {Data: []byte(`{{ range words .Name }}[{{ . }}]{{ end }}`), Mode: 0o644},
+	}
+	err := scaffolder.Scaffold(source, dest, Context{Name: "Alice Bob"}, scaffolder.Extend(javascript.Extension("template.js")))
+	assert.NoError(t, err)
+	scaffoldertest.AssertFilesEqual(t, dest, []scaffoldertest.File{
+		{Name: "list.txt", Mode: 0600, Content: "[Alice][Bob]"},
 	})
 }

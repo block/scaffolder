@@ -102,7 +102,7 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 				continue
 			}
 
-			// JS function, wrap it in func(...any) (any, error)
+			// JS function, wrap it in func(...any) (any, error) returning a Go value.
 			fn, ok := goja.AssertFunction(attr)
 			if !ok {
 				continue
@@ -112,7 +112,11 @@ func Extension(scriptPath string, options ...Option) scaffolder.Extension {
 				for i, arg := range args {
 					vmArgs[i] = vm.ToValue(arg)
 				}
-				return fn(global, vmArgs...)
+				result, err := fn(global, vmArgs...)
+				if err != nil {
+					return nil, err
+				}
+				return result.Export(), nil
 			}
 		}
 		return nil
