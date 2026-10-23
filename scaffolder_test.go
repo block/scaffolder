@@ -88,3 +88,24 @@ func TestScaffolderWithContext(t *testing.T) {
 	err := scaffolder.Scaffold(os.DirFS("testdata/template"), filepath.Join(t.TempDir(), "new"), nil, scaffolder.WithContext(ctx))
 	assert.IsError(t, err, context.Canceled)
 }
+
+func TestNewSourceWithoutRevisions(t *testing.T) {
+	_, err := scaffolder.NewSource(t.TempDir())
+	assert.IsError(t, err, scaffolder.ErrNoRevisions)
+}
+
+func TestNewSourceGitRevision(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping remote source test in short mode")
+	}
+	const revision = "b71c883012c49ad68c87aa7577495de1fe4862ec"
+	source, err := scaffolder.NewSource("git+https://github.com/block/scaffolder//testdata/template?ref=main&depth=1")
+	assert.NoError(t, err)
+	rev, err := source.OpenRevision(t.Context(), revision)
+	assert.NoError(t, err)
+	defer rev.Close()
+	assert.Equal(t, revision, rev.ID)
+	content, err := fs.ReadFile(rev.Files, "regular-{{ .Name }}")
+	assert.NoError(t, err)
+	assert.Equal(t, "Hello, {{ .Name }}!\n", string(content))
+}
