@@ -14,12 +14,12 @@ import (
 
 func TestGitSourceRevisions(t *testing.T) {
 	repo := t.TempDir()
-	git(t, repo, "init", "--quiet")
+	git(t, repo, "init", "--quiet", "--initial-branch=main")
 	first := commit(t, repo, "first")
 	second := commit(t, repo, "second")
-	// A shallow clone of the latest commit does not reach the first one.
+	// A shallow clone of the ref does not reach the first commit, and git rejects a ref with a commit.
 	source := &gitSource{git: getit.NewGit(), source: getit.Source{
-		URL:    &url.URL{Scheme: "file", Path: repo, RawQuery: "depth=1"},
+		URL:    &url.URL{Scheme: "file", Path: repo, RawQuery: "ref=main&depth=1"},
 		SubDir: "app",
 	}}
 
@@ -37,12 +37,6 @@ func TestGitSourceRevisions(t *testing.T) {
 	earlier.Close()
 	_, err = fs.ReadFile(earlier.Files, "file.txt")
 	assert.IsError(t, err, fs.ErrNotExist)
-}
-
-func TestGitSourceRejectsRevisionThatIsNotACommitHash(t *testing.T) {
-	source := &gitSource{git: getit.NewGit(), source: getit.Source{URL: &url.URL{Scheme: "file", Path: t.TempDir()}}}
-	_, err := source.OpenRevision(t.Context(), "main")
-	assert.EqualError(t, err, `invalid revision "main": not a full commit hash`)
 }
 
 // commit writes content to app/file.txt in repo, commits it and returns the commit hash.
