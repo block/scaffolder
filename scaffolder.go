@@ -35,23 +35,42 @@ type scaffoldOptions struct {
 	ctx     context.Context
 }
 
-// Extension allows the scaffolder to be extended.
+// Extension allows the scaffolder to be extended. Hooks run in registration
+// order, and the first error stops scaffolding.
 type Extension interface {
+	// Extend may modify the configuration.
 	Extend(mutableConfig *Config) error
+	// Before is called after every Extend has returned and before anything is
+	// written. It must not modify config.
+	Before(config *Config) error
+	// BeforeEach is called immediately before each file or directory, but
+	// not symlink, is written.
+	BeforeEach(path string) error
+	// AfterEach is called immediately after each file or directory, but not
+	// symlink, is written.
 	AfterEach(path string) error
+	// After is called once everything, including symlinks, has been written.
+	// It is not called if scaffolding fails.
+	After() error
 }
 
 // ExtensionFunc is a convenience type for creating an Extension.Extend from a function.
 type ExtensionFunc func(mutableConfig *Config) error
 
 func (f ExtensionFunc) Extend(mutableConfig *Config) error { return f(mutableConfig) }
+func (f ExtensionFunc) Before(_ *Config) error             { return nil }
+func (f ExtensionFunc) BeforeEach(_ string) error          { return nil }
 func (f ExtensionFunc) AfterEach(_ string) error           { return nil }
+func (f ExtensionFunc) After() error                       { return nil }
 
 // AfterEachExtensionFunc is a convenience type for creating an Extension.AfterEach from a function.
 type AfterEachExtensionFunc func(path string) error
 
 func (f AfterEachExtensionFunc) Extend(_ *Config) error      { return nil }
+func (f AfterEachExtensionFunc) Before(_ *Config) error      { return nil }
+func (f AfterEachExtensionFunc) BeforeEach(_ string) error   { return nil }
 func (f AfterEachExtensionFunc) AfterEach(path string) error { return f(path) }
+func (f AfterEachExtensionFunc) After() error                { return nil }
 
 // Option is a function that modifies the behaviour of the scaffolder.
 type Option func(*scaffoldOptions)
@@ -148,6 +167,11 @@ func Scaffold(source fs.FS, destination string, ctx any, options ...Option) erro
 			return fmt.Errorf("failed to extend scaffolder: %w", err)
 		}
 	}
+	for _, plugin := range opts.plugins {
+		if err := plugin.Before(&opts.Config); err != nil {
+			return fmt.Errorf("failed to run before hook: %w", err)
+		}
+	}
 
 	s := &state{
 		scaffoldOptions:  opts,
@@ -161,6 +185,12 @@ func Scaffold(source fs.FS, destination string, ctx any, options ...Option) erro
 	for dstPath := range s.deferredSymlinks {
 		if err := s.applySymlinks(dstPath); err != nil {
 			return fmt.Errorf("failed to apply symlink: %w", err)
+		}
+	}
+
+	for _, plugin := range opts.plugins {
+		if err := plugin.After(); err != nil {
+			return fmt.Errorf("failed to run after hook: %w", err)
 		}
 	}
 	return nil
@@ -297,13 +327,14 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		s.deferredSymlinks[dstPath] = target
 
 	case info.Mode().IsDir():
+		if err := s.beforeEach(dstPath); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(dstPath, 0700); err != nil {
 			return fmt.Errorf("failed to create directory: %w", err)
 		}
-		for _, plugin := range s.plugins {
-			if err := plugin.AfterEach(dstPath); err != nil {
-				return fmt.Errorf("failed to run after: %w", err)
-			}
+		if err := s.afterEach(dstPath); err != nil {
+			return err
 		}
 		return s.scaffold(srcPath, dstPath, ctx)
 
@@ -316,18 +347,37 @@ func (s *state) scaffoldEntry(info fs.FileInfo, srcPath, dstPath string, ctx any
 		if err != nil {
 			return fmt.Errorf("%s: failed to evaluate template: %w", srcPath, err)
 		}
+		if err := s.beforeEach(dstPath); err != nil {
+			return err
+		}
 		err = os.WriteFile(dstPath, []byte(content), info.Mode())
 		if err != nil {
 			return fmt.Errorf("failed to write file: %w", err)
 		}
-		for _, plugin := range s.plugins {
-			if err := plugin.AfterEach(dstPath); err != nil {
-				return fmt.Errorf("failed to run after: %w", err)
-			}
+		if err := s.afterEach(dstPath); err != nil {
+			return err
 		}
 
 	default:
 		return fmt.Errorf("%s: unsupported file type %s", srcPath, info.Mode())
+	}
+	return nil
+}
+
+func (s *state) beforeEach(path string) error {
+	for _, plugin := range s.plugins {
+		if err := plugin.BeforeEach(path); err != nil {
+			return fmt.Errorf("failed to run before: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *state) afterEach(path string) error {
+	for _, plugin := range s.plugins {
+		if err := plugin.AfterEach(path); err != nil {
+			return fmt.Errorf("failed to run after: %w", err)
+		}
 	}
 	return nil
 }

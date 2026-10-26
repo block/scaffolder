@@ -36,6 +36,26 @@ eg.
 scaffolder --json '{"name": "Bob"}' git+https://github.com/foo/bar ./dest
 ```
 
+## Detecting overwritten changes
+
+Re-scaffolding overwrites files, including any changes made to them since
+they were scaffolded. With `--checksum`, scaffolder records a checksum of every
+file it writes in `.scaffolder.sum` in the destination. Commit this file, and
+pass `--checksum` on every run.
+
+On later runs, scaffolder still overwrites files, but reports each one that had
+local changes. It also deletes files listed in `.scaffolder.sum` that the
+template no longer produces, and reports them:
+
+```
+overwrote local changes: main.go
+deleted: old.go
+deleted with local changes: legacy.go
+```
+
+`.scaffolder.sum` uses the `sha256sum` format, so `sha256sum -c .scaffolder.sum`
+checks it by hand.
+
 ## Example
 
 For example, given the following files and directories as the template:

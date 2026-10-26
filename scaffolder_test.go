@@ -2,6 +2,7 @@ package scaffolder_test
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -87,4 +88,160 @@ func TestScaffolderWithContext(t *testing.T) {
 	cancel()
 	err := scaffolder.Scaffold(os.DirFS("testdata/template"), filepath.Join(t.TempDir(), "new"), nil, scaffolder.WithContext(ctx))
 	assert.IsError(t, err, context.Canceled)
+}
+
+type recorder struct {
+	name       string
+	target     string
+	events     *[]string
+	extend     func(config *scaffolder.Config) error
+	before     func(config *scaffolder.Config) error
+	beforeEach func(path string) error
+	afterEach  func(path string) error
+	after      func() error
+}
+
+func (r *recorder) Extend(config *scaffolder.Config) error {
+	r.target = config.Target()
+	r.record("Extend", "")
+	if r.extend != nil {
+		return r.extend(config)
+	}
+	return nil
+}
+
+func (r *recorder) Before(config *scaffolder.Config) error {
+	r.record("Before", "")
+	if r.before != nil {
+		return r.before(config)
+	}
+	return nil
+}
+
+func (r *recorder) BeforeEach(path string) error {
+	r.record("BeforeEach", path)
+	if r.beforeEach != nil {
+		return r.beforeEach(path)
+	}
+	return nil
+}
+
+func (r *recorder) AfterEach(path string) error {
+	r.record("AfterEach", path)
+	if r.afterEach != nil {
+		return r.afterEach(path)
+	}
+	return nil
+}
+
+func (r *recorder) After() error {
+	r.record("After", "")
+	if r.after != nil {
+		return r.after()
+	}
+	return nil
+}
+
+func (r *recorder) record(hook, path string) {
+	event := r.name + "." + hook
+	if path != "" {
+		rel, err := filepath.Rel(r.target, path)
+		if err != nil {
+			panic(err)
+		}
+		event += " " + filepath.ToSlash(rel)
+	}
+	*r.events = append(*r.events, event)
+}
+
+func TestExtensionHookOrder(t *testing.T) {
+	var events []string
+	source := fstest.MapFS{
+		"dir/file": {Data: []byte("content"), Mode: 0o644},
+		"link":     {Data: []byte("dir/file"), Mode: fs.ModeSymlink},
+	}
+	err := scaffolder.Scaffold(source, filepath.Join(t.TempDir(), "new"), nil,
+		scaffolder.Extend(&recorder{name: "A", events: &events}),
+		scaffolder.Extend(&recorder{name: "B", events: &events}))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{
+		"A.Extend", "B.Extend",
+		"A.Before", "B.Before",
+		"A.BeforeEach dir", "B.BeforeEach dir", "A.AfterEach dir", "B.AfterEach dir",
+		"A.BeforeEach dir/file", "B.BeforeEach dir/file", "A.AfterEach dir/file", "B.AfterEach dir/file",
+		"A.After", "B.After",
+	}, events)
+}
+
+func TestBeforeSeesFinalConfig(t *testing.T) {
+	var events []string
+	var exclude []string
+	err := scaffolder.Scaffold(fstest.MapFS{}, filepath.Join(t.TempDir(), "new"), nil,
+		scaffolder.Extend(&recorder{name: "A", events: &events, before: func(config *scaffolder.Config) error {
+			exclude = config.Exclude
+			return nil
+		}}),
+		scaffolder.Extend(&recorder{name: "B", events: &events, extend: func(config *scaffolder.Config) error {
+			config.Exclude = append(config.Exclude, "excluded")
+			return nil
+		}}))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"excluded"}, exclude)
+}
+
+func TestBeforeEachSeesOldContent(t *testing.T) {
+	var events []string
+	dest := t.TempDir()
+	assert.NoError(t, os.WriteFile(filepath.Join(dest, "file"), []byte("old"), 0o600))
+	var contents []string
+	readFile := func(path string) error {
+		content, err := os.ReadFile(path)
+		contents = append(contents, string(content))
+		return err
+	}
+	err := scaffolder.Scaffold(fstest.MapFS{"file": {Data: []byte("new"), Mode: 0o644}}, dest, nil,
+		scaffolder.Extend(&recorder{name: "A", events: &events, beforeEach: readFile, afterEach: readFile}))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"old", "new"}, contents)
+}
+
+func TestAfterRunsAfterSymlinks(t *testing.T) {
+	var events []string
+	dest := filepath.Join(t.TempDir(), "new")
+	var mode fs.FileMode
+	source := fstest.MapFS{
+		"file": {Data: []byte("content"), Mode: 0o644},
+		"link": {Data: []byte("file"), Mode: fs.ModeSymlink},
+	}
+	err := scaffolder.Scaffold(source, dest, nil,
+		scaffolder.Extend(&recorder{name: "A", events: &events, after: func() error {
+			info, err := os.Lstat(filepath.Join(dest, "link"))
+			if err != nil {
+				return err
+			}
+			mode = info.Mode()
+			return nil
+		}}))
+	assert.NoError(t, err)
+	assert.Equal(t, fs.ModeSymlink, mode.Type())
+}
+
+func TestAfterNotCalledOnFailure(t *testing.T) {
+	var events []string
+	source := fstest.MapFS{"file": {Data: []byte("{{ .Unclosed"), Mode: 0o644}}
+	err := scaffolder.Scaffold(source, filepath.Join(t.TempDir(), "new"), nil,
+		scaffolder.Extend(&recorder{name: "A", events: &events}))
+	assert.Error(t, err)
+	assert.Equal(t, []string{"A.Extend", "A.Before"}, events)
+}
+
+func TestBeforeEachErrorStopsRun(t *testing.T) {
+	var events []string
+	dest := filepath.Join(t.TempDir(), "new")
+	errBeforeEach := errors.New("refused")
+	err := scaffolder.Scaffold(fstest.MapFS{"file": {Data: []byte("content"), Mode: 0o644}}, dest, nil,
+		scaffolder.Extend(&recorder{name: "A", events: &events, beforeEach: func(string) error { return errBeforeEach }}))
+	assert.IsError(t, err, errBeforeEach)
+	_, err = os.Stat(filepath.Join(dest, "file"))
+	assert.IsError(t, err, fs.ErrNotExist)
 }
