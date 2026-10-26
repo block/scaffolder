@@ -206,12 +206,12 @@ func (e *extension) deleteUnproduced() ([]Change, error) {
 			continue
 		}
 		// A symlinked parent could alias a produced file, so only delete
-		// paths that still resolve without one.
-		aliased, err := e.underSymlink(rel)
+		// paths reached through real directories.
+		reachable, err := e.reachable(rel)
 		if err != nil {
 			return nil, err
 		}
-		if aliased {
+		if !reachable {
 			continue
 		}
 		sum, ok, err := e.hashRegular(rel)
@@ -233,21 +233,28 @@ func (e *extension) deleteUnproduced() ([]Change, error) {
 	return changes, nil
 }
 
-// underSymlink reports whether any parent directory of rel is a symlink.
-func (e *extension) underSymlink(rel string) (bool, error) {
-	for dir := path.Dir(rel); dir != "."; dir = path.Dir(dir) {
+// reachable reports whether rel's parents are all real directories. A
+// missing or non-directory parent means rel is gone.
+func (e *extension) reachable(rel string) (bool, error) {
+	parent := path.Dir(rel)
+	if parent == "." {
+		return true, nil
+	}
+	dir := ""
+	for name := range strings.SplitSeq(parent, "/") {
+		dir = path.Join(dir, name)
 		info, err := e.root.Lstat(filepath.FromSlash(dir))
 		if errors.Is(err, fs.ErrNotExist) {
-			continue
+			return false, nil
 		}
 		if err != nil {
 			return false, fmt.Errorf("%s: %w", dir, err)
 		}
-		if info.Mode()&fs.ModeSymlink != 0 {
-			return true, nil
+		if !info.IsDir() {
+			return false, nil
 		}
 	}
-	return false, nil
+	return true, nil
 }
 
 func (e *extension) relPath(path string) (string, error) {

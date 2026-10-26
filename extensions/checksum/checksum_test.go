@@ -178,6 +178,18 @@ func TestEntryThroughSymlinkIsNotDeleted(t *testing.T) {
 	assert.Equal(t, "victim", readFile(t, filepath.Join(outside, "victim")))
 }
 
+func TestStaleEntryUnderFileParentIsSkipped(t *testing.T) {
+	dest := t.TempDir()
+	_, err := scaffold(t, dest, files("a.txt", "a", "dir/old.txt", "old"))
+	assert.NoError(t, err)
+	assert.NoError(t, os.RemoveAll(filepath.Join(dest, "dir")))
+	writeFile(t, filepath.Join(dest, "dir"), "user")
+	changes, err := scaffold(t, dest, files("a.txt", "a"))
+	assert.NoError(t, err)
+	assert.Zero(t, changes)
+	assert.Equal(t, sums("a.txt", "a"), readFile(t, filepath.Join(dest, checksum.File)))
+}
+
 func TestEntryAliasingProducedFileIsNotDeleted(t *testing.T) {
 	dest := t.TempDir()
 	_, err := scaffold(t, dest, files("old/a.txt", "a"))
