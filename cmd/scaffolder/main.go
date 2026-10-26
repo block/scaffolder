@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"os"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/block/scaffolder"
+	"github.com/block/scaffolder/extensions/checksum"
 	"github.com/block/scaffolder/extensions/javascript"
 )
 
@@ -44,6 +46,7 @@ var cli struct {
 	Version  kong.VersionFlag `help:"Show version."`
 	JSON     *JSONSource      `help:"JSON file path or direct JSON string."`
 	Script   string           `help:"Path to a JavaScript file to use for template functions." type:"existingfile" optional:""`
+	Checksum bool             `help:"Record checksums in .scaffolder.sum and report local changes that are overwritten or deleted. Use it on every run, or .scaffolder.sum goes stale."`
 	Template string           `arg:"" help:"Template directory." type:"existingdir"`
 	Dest     string           `arg:"" help:"Destination directory to scaffold."`
 }
@@ -58,7 +61,7 @@ func main() {
 	err := os.MkdirAll(cli.Dest, 0750)
 	kctx.FatalIfErrorf(err)
 
-	err = scaffolder.Scaffold(os.DirFS(cli.Template), cli.Dest, context, scaffolder.Functions(template.FuncMap{
+	options := []scaffolder.Option{scaffolder.Functions(template.FuncMap{
 		"snake":          strcase.ToSnake,
 		"screamingSnake": strcase.ToScreamingSnake,
 		"camel":          strcase.ToCamel,
@@ -71,8 +74,18 @@ func main() {
 		"typename": func(v any) string {
 			return reflect.Indirect(reflect.ValueOf(v)).Type().Name()
 		},
-	}), scaffolder.Extend(javascript.Extension(scriptPath())))
+	}), scaffolder.Extend(javascript.Extension(scriptPath()))}
+	if cli.Checksum {
+		// Registered last so it records files after other extensions have modified them.
+		options = append(options, scaffolder.Extend(checksum.Extension(printChange)))
+	}
+
+	err = scaffolder.Scaffold(os.DirFS(cli.Template), cli.Dest, context, options...)
 	kctx.FatalIfErrorf(err)
+}
+
+func printChange(change checksum.Change) {
+	fmt.Fprintf(os.Stderr, "%s: %s\n", change.Path, change.Kind)
 }
 
 // scriptPath returns the script relative to the template when it is inside it,
