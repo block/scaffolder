@@ -48,9 +48,9 @@ local changes. It also deletes files listed in `.scaffolder.sum` that the
 template no longer produces, and reports them:
 
 ```
-overwrote local changes: main.go
-deleted: old.go
-deleted with local changes: legacy.go
+main.go: overwrote local changes
+old.go: deleted
+legacy.go: deleted with local changes
 ```
 
 `.scaffolder.sum` uses the `sha256sum` format, so `sha256sum -c .scaffolder.sum`

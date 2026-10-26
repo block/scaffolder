@@ -85,7 +85,7 @@ func main() {
 }
 
 func printChange(change checksum.Change) {
-	fmt.Fprintf(os.Stderr, "%s: %s\n", change.Kind, change.Path)
+	fmt.Fprintf(os.Stderr, "%s: %s\n", change.Path, change.Kind)
 }
 
 // scriptPath returns the script relative to the template when it is inside it,
