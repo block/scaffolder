@@ -24,8 +24,6 @@ import (
 // File is the name of the checksum file in the destination root, in sha256sum format.
 const File = ".scaffolder.sum"
 
-const tempFile = File + ".tmp"
-
 var sumLine = regexp.MustCompile(`^([0-9a-f]{64})  (.+)\n?$`)
 
 // ChangeKind describes what happened to a file with local changes.
@@ -115,7 +113,7 @@ func (e *extension) BeforeEach(path string) error {
 	if err != nil {
 		return err
 	}
-	if rel == File || rel == tempFile {
+	if rel == File {
 		return fmt.Errorf("%s: this name is reserved for checksum tracking, rename it in the template", rel)
 	}
 	if strings.ContainsAny(rel, "\\\n") {
@@ -149,6 +147,9 @@ func (e *extension) After() error {
 		e.root = root
 	}
 	defer e.root.Close()
+	if err := e.checkFileIsNotSymlink(); err != nil {
+		return err
+	}
 
 	// Hashing here rather than in AfterEach picks up changes that other
 	// extensions make after their own AfterEach.
@@ -171,9 +172,6 @@ func (e *extension) After() error {
 	changes = append(changes, deleted...)
 
 	if err := e.writeSums(sums); err != nil {
-		return fmt.Errorf("failed to write %s: %w", File, err)
-	}
-	if err := e.root.Rename(tempFile, File); err != nil {
 		return fmt.Errorf("failed to write %s: %w", File, err)
 	}
 
@@ -207,6 +205,15 @@ func (e *extension) deleteUnproduced() ([]Change, error) {
 		if e.produced[rel] {
 			continue
 		}
+		// A symlinked parent could alias a produced file, so only delete
+		// paths that still resolve without one.
+		aliased, err := e.underSymlink(rel)
+		if err != nil {
+			return nil, err
+		}
+		if aliased {
+			continue
+		}
 		sum, ok, err := e.hashRegular(rel)
 		if err != nil {
 			return nil, err
@@ -224,6 +231,23 @@ func (e *extension) deleteUnproduced() ([]Change, error) {
 		changes = append(changes, Change{Path: rel, Kind: kind})
 	}
 	return changes, nil
+}
+
+// underSymlink reports whether any parent directory of rel is a symlink.
+func (e *extension) underSymlink(rel string) (bool, error) {
+	for dir := path.Dir(rel); dir != "."; dir = path.Dir(dir) {
+		info, err := e.root.Lstat(filepath.FromSlash(dir))
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, fmt.Errorf("%s: %w", dir, err)
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (e *extension) relPath(path string) (string, error) {
@@ -286,11 +310,34 @@ func parseSums(data []byte) (map[string]string, error) {
 	return sums, nil
 }
 
-func (e *extension) writeSums(sums map[string]string) error {
-	f, err := e.root.OpenFile(tempFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+// checkFileIsNotSymlink rejects a symlink the template made at File, which
+// BeforeEach never sees.
+func (e *extension) checkFileIsNotSymlink() error {
+	info, err := e.root.Lstat(File)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", File, err)
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s: this name is reserved for checksum tracking, rename it in the template", File)
+	}
+	return nil
+}
+
+// writeSums renames a new temporary file over File, so File is never left
+// partially written.
+func (e *extension) writeSums(sums map[string]string) (err error) {
+	f, err := os.CreateTemp(e.target, File+".*")
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(f.Name())
+		}
+	}()
 	w := bufio.NewWriter(f)
 	for _, rel := range slices.Sorted(maps.Keys(sums)) {
 		fmt.Fprintf(w, "%s  %s\n", sums[rel], rel)
@@ -299,5 +346,12 @@ func (e *extension) writeSums(sums map[string]string) error {
 		_ = f.Close()
 		return err
 	}
-	return f.Close()
+	if err := f.Chmod(0o644); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return e.root.Rename(filepath.Base(f.Name()), File)
 }

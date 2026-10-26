@@ -172,14 +172,47 @@ func TestEntryThroughSymlinkIsNotDeleted(t *testing.T) {
 	dest := t.TempDir()
 	assert.NoError(t, os.Symlink(outside, filepath.Join(dest, "out")))
 	writeFile(t, filepath.Join(dest, checksum.File), sums("out/victim", "victim"))
-	_, err := scaffold(t, dest, files("a.txt", "a"))
-	assert.Error(t, err)
+	changes, err := scaffold(t, dest, files("a.txt", "a"))
+	assert.NoError(t, err)
+	assert.Zero(t, changes)
 	assert.Equal(t, "victim", readFile(t, filepath.Join(outside, "victim")))
+}
+
+func TestEntryAliasingProducedFileIsNotDeleted(t *testing.T) {
+	dest := t.TempDir()
+	_, err := scaffold(t, dest, files("old/a.txt", "a"))
+	assert.NoError(t, err)
+	assert.NoError(t, os.Rename(filepath.Join(dest, "old"), filepath.Join(dest, "new")))
+	assert.NoError(t, os.Symlink("new", filepath.Join(dest, "old")))
+	changes, err := scaffold(t, dest, files("new/a.txt", "a"))
+	assert.NoError(t, err)
+	assert.Zero(t, changes)
+	assert.Equal(t, "a", readFile(t, filepath.Join(dest, "new", "a.txt")))
+	assert.Equal(t, sums("new/a.txt", "a"), readFile(t, filepath.Join(dest, checksum.File)))
 }
 
 func TestTemplateProducingChecksumFile(t *testing.T) {
 	_, err := scaffold(t, t.TempDir(), files(checksum.File, "template"))
 	assert.Error(t, err)
+}
+
+func TestTemplateSymlinkAtChecksumFile(t *testing.T) {
+	dest := t.TempDir()
+	source := files("a.txt", "a")
+	source[checksum.File] = &fstest.MapFile{Data: []byte("a.txt"), Mode: fs.ModeSymlink}
+	_, err := scaffold(t, dest, source)
+	assert.Error(t, err)
+	assert.Equal(t, "a", readFile(t, filepath.Join(dest, "a.txt")))
+}
+
+func TestChecksumFileWriteDoesNotFollowSymlinks(t *testing.T) {
+	dest := t.TempDir()
+	source := files("a.txt", "a")
+	source[checksum.File+".tmp"] = &fstest.MapFile{Data: []byte("a.txt"), Mode: fs.ModeSymlink}
+	_, err := scaffold(t, dest, source)
+	assert.NoError(t, err)
+	assert.Equal(t, "a", readFile(t, filepath.Join(dest, "a.txt")))
+	assert.Equal(t, sums("a.txt", "a"), readFile(t, filepath.Join(dest, checksum.File)))
 }
 
 func TestRecordsChangesFromEarlierExtensions(t *testing.T) {
