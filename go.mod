@@ -1,19 +1,20 @@
 module github.com/block/scaffolder
 
-go 1.25.6
+go 1.26.0
 
 require (
 	github.com/alecthomas/assert/v2 v2.11.0
 	github.com/alecthomas/kong v1.13.0
 	github.com/block/getit v0.1.0
-	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
+	github.com/dop251/goja v0.0.0-20261118204651-8dfece3d1e1d
 	github.com/iancoleman/strcase v0.3.0
-	golang.org/x/text v0.33.0
+	golang.org/x/text v0.43.0
 )
 
 require (
 	github.com/alecthomas/repr v0.5.2 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect
+	github.com/dlclark/regexp2/v2 v2.11.0 // indirect
 	github.com/go-sourcemap/sourcemap v2.1.3+incompatible // indirect
 	github.com/google/pprof v0.0.0-20230207041349-798e818bf904 // indirect
 	github.com/hexops/gotextdiff v1.0.3 // indirect
